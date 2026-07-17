@@ -1,0 +1,17 @@
+global:
+  scrape_interval: 5s # a cada 5s, puxa as métricas
+  evaluation_interval: 5s # a cada 5s, avalia as regras de alerta
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093 # nome do serviço no docker-compose
+
+rule_files:
+  - "alert.rules.yml"
+
+scrape_configs:
+  - job_name: "app-fake"
+    static_configs:
+      - targets: ["app-fake:8000"] # nome do serviço + porta interna

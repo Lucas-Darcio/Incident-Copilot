@@ -1,0 +1,13 @@
+groups:
+  - name: app-fake-alerts
+    rules:
+      - alert: HighCPUUsage
+        expr: cpu_usage_percent > 80
+        for: 15s
+        # "for: 15s" evita alertar por um pico momentâneo -
+        # a condição precisa se manter por 15s seguidos
+        labels:
+          severity: critical
+        annotations:
+          summary: "CPU alta detectada em {{ $labels.instance }}"
+          description: "cpu_usage_percent está em {{ $value }}% (limite: 80%) há mais de 15s"

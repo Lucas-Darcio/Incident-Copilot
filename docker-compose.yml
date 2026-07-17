@@ -1,0 +1,51 @@
+services:
+  # ---------- Grupo "ambiente alvo" ----------
+  app-fake:
+    build: ./app-fake
+    container_name: app-fake
+    ports:
+      - "8000:8000"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+    networks:
+      - copilot-net
+
+  # ---------- Grupo "observabilidade" ----------
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alert.rules.yml:/etc/prometheus/alert.rules.yml:ro
+    depends_on:
+      - app-fake
+    networks:
+      - copilot-net
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: alertmanager
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    networks:
+      - copilot-net
+
+  # ---------- Receiver temporário (vira agent-orchestrator na Fase 4) ----------
+  webhook-receiver:
+    build: ./webhook-receiver
+    container_name: webhook-receiver
+    ports:
+      - "8001:8001"
+    networks:
+      - copilot-net
+
+networks:
+  copilot-net:
+    driver: bridge
