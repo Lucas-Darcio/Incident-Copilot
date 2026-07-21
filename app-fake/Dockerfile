@@ -1,5 +1,12 @@
 FROM python:3.12-slim
 
+# stress-ng não é um pacote Python, então instalamos via apt do sistema.
+# --no-install-recommends mantém a imagem enxuta (evita pacotes extras
+# que não usamos, como documentação e sugestões do stress-ng).
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends stress-ng && \
+    rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 COPY requirements.txt .
