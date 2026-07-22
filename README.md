@@ -3,17 +3,10 @@
 Copiloto de resposta a incidentes usando sistemas multi-agente (LangGraph)
 com aprovação humana obrigatória antes de qualquer ação corretiva real.
 
-## Status: Fase 2 — Chaos injection real com stress-ng
-
-A partir desta fase, `cpu_usage_percent` é uma métrica **real**, lida via
-`psutil` dentro do próprio container `app-fake`. O "incidente" é gerado
-por um processo `stress-ng` real, disparado via subprocess quando você
-chama `/chaos/start`. O container tem um teto de recursos definido em
-`docker-compose.yml` (`cpus: "0.5"`, `memory: 256M`), então mesmo sob
-carga máxima o impacto fica contido.
+## Arquitetura geral
 
 ```
-app-fake (mede CPU real via psutil + roda stress-ng sob demanda)
+app-fake (mede CPU real via cgroup + roda stress-ng sob demanda)
       │  scrape a cada 5s
       ▼
 prometheus (avalia regras)
@@ -23,14 +16,39 @@ alertmanager (agrupa e envia)
       │  webhook HTTP POST
       ▼
 webhook-receiver (temporário — vira o agent-orchestrator na Fase 4)
+
+runbooks/*.md
+      │  leitura + chunking por seção
+      ▼
+sentence-transformers (all-MiniLM-L6-v2, local, sem custo de API)
+      │  gera embeddings
+      ▼
+qdrant (vector database)
+      │  busca por similaridade
+      ▼
+rag-service: POST /search → runbooks mais relevantes para uma consulta
 ```
 
-> Nota de arquitetura: optei por rodar o `stress-ng` **dentro do
-> próprio container `app-fake`** (via subprocess) ao invés de um
-> `chaos-injector` externo, para manter o comportamento determinístico
-> e reprodutível em qualquer máquina. Simular um "vizinho barulhento"
-> (carga externa disputando os mesmos núcleos físicos) fica como
-> exercício avançado futuro.
+O `rag-service` funciona isolado de propósito nesta fase — ele não
+depende de agentes. A conexão com o multi-agente (LangGraph) só
+acontece na Fase 4, quando o agente de diagnóstico vai *consumir* esse
+mesmo endpoint `/search`.
+
+> **Nota de arquitetura (Fase 2)**: optamos por rodar o `stress-ng`
+> **dentro do próprio container `app-fake`** (via subprocess) ao invés
+> de um `chaos-injector` externo, para manter o comportamento
+> determinístico e reprodutível em qualquer máquina. Simular um
+> "vizinho barulhento" (carga externa disputando os mesmos núcleos
+> físicos) fica como exercício avançado futuro.
+>
+> **Nota técnica importante (Fase 2)**: a métrica `cpu_usage_percent` é
+> lida diretamente do **cgroup** do container (o mesmo mecanismo que o
+> `docker stats` usa), e expressa como *percentual do limite do próprio
+> container* — não como percentual de um núcleo inteiro do host. Isso
+> evita um erro comum: usar `psutil.cpu_percent()` puro dentro de um
+> container faz a leitura vir de `/proc/stat`, que ainda reflete a
+> máquina host inteira, gerando números artificialmente baixos e que
+> nunca cruzam o threshold de alerta.
 
 ## Como rodar
 
@@ -38,13 +56,19 @@ webhook-receiver (temporário — vira o agent-orchestrator na Fase 4)
 docker compose up --build
 ```
 
+> O primeiro build do `rag-service` demora alguns minutos — ele baixa o
+> PyTorch (CPU-only) e o modelo de embedding durante a construção da
+> imagem, para o container já subir pronto para uso.
+
 Serviços disponíveis:
 - `app-fake`: http://localhost:8000 (docs em `/docs`)
 - `prometheus`: http://localhost:9090
 - `alertmanager`: http://localhost:9093
 - `webhook-receiver`: http://localhost:8001
+- `rag-service`: http://localhost:8002 (docs em `/docs`)
+- `qdrant`: http://localhost:6333/dashboard
 
-## Como testar o fluxo de ponta a ponta
+## Como testar — pipeline de incidentes (Fases 1 e 2)
 
 1. Confirme que tudo subiu:
    ```bash
@@ -56,12 +80,11 @@ Serviços disponíveis:
    curl -X POST http://localhost:8000/chaos/start
    ```
 
-3. Acompanhe a métrica subindo em tempo real (agora é uso de CPU de verdade):
+3. Acompanhe a métrica subindo em tempo real:
    http://localhost:9090/graph → busque por `cpu_usage_percent`
 
-   Dica: rode `docker stats app-fake` em outro terminal para ver o
-   consumo de CPU/memória do container em tempo real e confirmar que
-   ele respeita o teto de `0.5` CPU definido no compose.
+   Dica: rode `docker stats app-fake` em outro terminal para comparar
+   com o consumo real de CPU/memória do container.
 
 4. Depois de ~15-20s, veja o alerta ativo no Prometheus:
    http://localhost:9090/alerts
@@ -71,18 +94,40 @@ Serviços disponíveis:
    docker compose logs -f webhook-receiver
    ```
 
-6. Pare o incidente manualmente (ou espere os 120s do timeout de segurança)
-   e veja o alerta ser resolvido:
+6. Pare o incidente manualmente (ou espere os 120s do timeout de
+   segurança) e veja o alerta ser resolvido:
    ```bash
    curl -X POST http://localhost:8000/chaos/stop
    ```
+
+## Como testar — RAG (Fase 3)
+
+1. Popule o Qdrant com os runbooks:
+   ```bash
+   curl -X POST http://localhost:8002/ingest
+   ```
+   Deve retornar algo como `{"chunks_indexados": 20}`.
+
+2. Teste uma busca semântica:
+   ```bash
+   curl -X POST http://localhost:8002/search \
+     -H "Content-Type: application/json" \
+     -d '{"query": "container consumindo muito processamento", "top_k": 3}'
+   ```
+   O resultado esperado é o runbook de CPU alta aparecer em primeiro
+   lugar (maior `score`), mesmo sem a palavra "CPU" aparecer
+   literalmente na pergunta — isso é a busca semântica funcionando
+   (compara *significado*, não só palavras-chave).
+
+3. Explore a coleção diretamente pelo painel do Qdrant:
+   http://localhost:6333/dashboard
 
 ## Roadmap
 
 - [x] Fase 0 — Setup do repositório
 - [x] Fase 1 — Ambiente alvo + observabilidade (Prometheus/Alertmanager)
 - [x] Fase 2 — Chaos injection real com `stress-ng`
-- [ ] Fase 3 — Base de conhecimento RAG (runbooks)
+- [x] Fase 3 — Base de conhecimento RAG (runbooks + embeddings locais + Qdrant)
 - [ ] Fase 4 — Agentes multi-agente com LangGraph
 - [ ] Fase 5 — Human-in-the-loop (aprovação de ações corretivas)
 - [ ] Fase 6 — Dashboard
@@ -92,5 +137,5 @@ Serviços disponíveis:
 
 O `agent-orchestrator` (Fase 4) terá acesso ao socket do Docker do host
 para executar ações corretivas aprovadas por um humano (ex: restart de
-container). Ver seção "Ações corretivas" abaixo assim que a Fase 5 for
+container). Ver seção "Ações corretivas" assim que a Fase 5 for
 implementada.
