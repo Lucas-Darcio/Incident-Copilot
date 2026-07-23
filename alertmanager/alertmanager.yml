@@ -1,11 +1,17 @@
 route:
   receiver: "webhook-receiver"
   group_wait: 5s        # espera 5s agrupando alertas parecidos antes de mandar
-  group_interval: 10s
-  repeat_interval: 1m   # se o alerta continuar ativo, reenvia a cada 1min
+  group_interval: 30s   # também define o timeout de espera pela resposta do
+                        # webhook (ver nota no agent-orchestrator/main.py) —
+                        # 30s dá folga extra, mas a correção principal é o
+                        # agent-orchestrator responder de forma assíncrona
+  repeat_interval: 5m   # se o alerta continuar ativo, reenvia a cada 5min
+                        # (o agent-orchestrator deduplica por fingerprint,
+                        # então isso é só para reduzir ruído, não é a
+                        # proteção principal contra chamadas repetidas ao LLM)
 
 receivers:
   - name: "webhook-receiver"
     webhook_configs:
-      - url: "http://webhook-receiver:8001/webhook"
+      - url: "http://agent-orchestrator:8001/webhook"
         send_resolved: true   # também avisa quando o alerta é resolvido

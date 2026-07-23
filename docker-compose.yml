@@ -37,15 +37,6 @@ services:
     networks:
       - copilot-net
 
-  # ---------- Receiver temporário (vira agent-orchestrator na Fase 4) ----------
-  webhook-receiver:
-    build: ./webhook-receiver
-    container_name: webhook-receiver
-    ports:
-      - "8001:8001"
-    networks:
-      - copilot-net
-
   # ---------- Grupo "RAG" (Fase 3) ----------
   qdrant:
     image: qdrant/qdrant:v1.11.3
@@ -67,6 +58,19 @@ services:
       - ./runbooks:/app/runbooks:ro
     depends_on:
       - qdrant
+    networks:
+      - copilot-net
+
+  # ---------- Agentes (Fase 4) ----------
+  agent-orchestrator:
+    build: ./agent-orchestrator
+    container_name: agent-orchestrator
+    ports:
+      - "8001:8001"
+    environment:
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+    depends_on:
+      - rag-service
     networks:
       - copilot-net
 
