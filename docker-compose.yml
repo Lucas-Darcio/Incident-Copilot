@@ -61,7 +61,25 @@ services:
     networks:
       - copilot-net
 
-  # ---------- Agentes (Fase 4) ----------
+  # ---------- Human-in-the-loop (Fase 5) ----------
+  postgres-agent:
+    image: postgres:16-alpine
+    container_name: postgres-agent
+    environment:
+      - POSTGRES_USER=incident_copilot
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=incident_copilot
+    volumes:
+      - postgres-agent-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U incident_copilot"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - copilot-net
+
+  # ---------- Agentes (Fase 4/5) ----------
   agent-orchestrator:
     build: ./agent-orchestrator
     container_name: agent-orchestrator
@@ -69,8 +87,18 @@ services:
       - "8001:8001"
     environment:
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - POSTGRES_URI=postgresql://incident_copilot:${POSTGRES_PASSWORD}@postgres-agent:5432/incident_copilot
+      - LANGGRAPH_STRICT_MSGPACK=true
+    volumes:
+      # Dá ao agent-orchestrator acesso para executar ações reais em
+      # outros containers (ex: restart). Ver nota de segurança em
+      # agent-orchestrator/graph.py (execute_action_node).
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
-      - rag-service
+      rag-service:
+        condition: service_started
+      postgres-agent:
+        condition: service_healthy
     networks:
       - copilot-net
 
@@ -80,3 +108,4 @@ networks:
 
 volumes:
   qdrant-data:
+  postgres-agent-data:

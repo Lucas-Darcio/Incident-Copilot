@@ -73,7 +73,8 @@ prometheus (avalia regras)
 alertmanager (agrupa e envia)
       │  webhook HTTP POST
       ▼
-agent-orchestrator (LangGraph: triagem → retrieval → diagnóstico)
+agent-orchestrator (LangGraph: triagem → retrieval → diagnóstico →
+                     aprovação humana → execução da ação)
       │  consulta
       ▼
 rag-service (busca semântica nos runbooks)
@@ -85,20 +86,44 @@ sentence-transformers (all-MiniLM-L6-v2, local, sem custo de API)
       │  gera embeddings
       ▼
 qdrant (vector database)
+
+postgres-agent (guarda o estado do grafo entre pausas — Fase 5)
 ```
 
-O `agent-orchestrator` (Fase 4) roda um grafo LangGraph com 3 agentes em
-sequência:
+O `agent-orchestrator` roda um grafo LangGraph com 5 passos em sequência:
 
-1. **Triagem**: interpreta o payload bruto do Alertmanager e extrai um
-   resumo em texto + a severidade original
+1. **Triagem**: interpreta o payload bruto do Alertmanager, extrai um
+   resumo em texto + a severidade original + o nome do container afetado
 2. **Retrieval**: usa esse resumo como query no `rag-service` (Fase 3)
 3. **Diagnóstico**: usa um LLM (`gemma-4-31b-it`, via API do Google) para
-   sintetizar causa provável + ação recomendada, com base no alerta e
-   nos runbooks recuperados
+   sintetizar causa provável + ação recomendada + se a ação é
+   automatizável
+4. **Aprovação humana** *(Fase 5)*: PAUSA o grafo com `interrupt()` e
+   expõe o diagnóstico via `GET /pending` — a execução só continua
+   quando um humano chama `POST /approve/{thread_id}`
+5. **Execução da ação** *(Fase 5)*: só roda depois da aprovação. Hoje a
+   única ação automatizável é **reiniciar o container afetado**,
+   executada via Docker SDK. Qualquer ação rejeitada, ou que o modelo
+   tenha marcado como não-automatizável, não altera nada no sistema.
 
-Ainda **sem aprovação humana** nesta fase — o agente só recomenda, não
-executa nada. Isso é o foco da Fase 5.
+> **Nota de segurança importante**: o `agent-orchestrator` tem acesso ao
+> socket do Docker do host (`/var/run/docker.sock` montado como volume)
+> para poder executar ações reais em outros containers. Isso equivale,
+> na prática, a dar acesso root ao host para esse container — aceitável
+> aqui por ser um projeto local de portfólio, mas em produção o
+> recomendado seria isolar isso atrás de uma API intermediária com uma
+> allowlist restrita de comandos, não dar acesso livre ao socket.
+>
+> **Nota sobre persistência (Fase 5)**: o checkpointer agora é
+> **Postgres** (serviço `postgres-agent`), não mais em memória. Isso é
+> essencial porque um incidente pode ficar pausado esperando aprovação
+> humana por minutos, horas, ou até ser esquecido — o estado precisa
+> sobreviver mesmo que o container do `agent-orchestrator` reinicie
+> nesse meio tempo. Uma limitação conhecida (comum em sistemas reais
+> com human-in-the-loop): se ninguém nunca aprovar/rejeitar um
+> incidente, ele fica pendente para sempre no Postgres — em produção,
+> normalmente se implementa um job que expira aprovações não respondidas
+> depois de um tempo (ex: 24h).
 
 > **Nota sobre custo de LLM**: o Alertmanager reenvia um alerta `firing`
 > periodicamente enquanto ele continuar ativo (`repeat_interval`). Sem
@@ -137,11 +162,12 @@ executa nada. Isso é o foco da Fase 5.
 
 ## Configuração (necessária a partir da Fase 4)
 
-O `agent-orchestrator` precisa de uma chave da API do Google (Gemini/Gemma):
+O `agent-orchestrator` precisa de uma chave da API do Google (Gemini/Gemma)
+e, a partir da Fase 5, de uma senha para o Postgres do checkpointer:
 
 ```bash
 cp .env.example .env
-# edite o .env e cole sua chave
+# edite o .env e preencha GOOGLE_API_KEY e POSTGRES_PASSWORD
 ```
 
 O `.env` está no `.gitignore`.
@@ -163,6 +189,7 @@ Serviços disponíveis:
 - `agent-orchestrator`: http://localhost:8001 (docs em `/docs`)
 - `rag-service`: http://localhost:8002 (docs em `/docs`)
 - `qdrant`: http://localhost:6333/dashboard
+- `postgres-agent`: só uso interno (checkpointer do LangGraph), sem porta exposta
 
 ## Como testar — pipeline de incidentes (Fases 1 e 2)
 
@@ -227,46 +254,61 @@ Serviços disponíveis:
 3. Explore a coleção diretamente pelo painel do Qdrant:
    http://localhost:6333/dashboard
 
-## Como testar — Agentes (Fase 4)
+## Como testar — Agentes + Human-in-the-Loop (Fases 4 e 5)
 
-### Teste manual rápido (síncrono, sem depender do Alertmanager)
+### Teste manual passo a passo (sem depender do Alertmanager)
 
-```bash
-curl -X POST http://localhost:8001/diagnose \
-  -H "Content-Type: application/json" \
-  -d '{
-    "alertname": "HighCPUUsage",
-    "summary": "CPU alta detectada em app-fake:8000",
-    "description": "cpu_usage_percent está em 97% (limite: 80%) há mais de 15s",
-    "severity": "critical"
-  }'
-```
+1. Dispare um incidente de teste — o grafo roda até pausar, esperando aprovação:
+   ```bash
+   curl -X POST http://localhost:8001/diagnose \
+     -H "Content-Type: application/json" \
+     -d '{
+       "alertname": "HighCPUUsage",
+       "summary": "CPU alta detectada em app-fake:8000",
+       "description": "cpu_usage_percent está em 97% (limite: 80%) há mais de 15s",
+       "severity": "critical",
+       "instance": "app-fake:8000"
+     }'
+   ```
+   A resposta traz `"status": "pending_approval"`, junto com `diagnosis`,
+   `recommended_action`, `action_type` e um `thread_id` — **guarde esse
+   `thread_id`**, você vai precisar dele no próximo passo.
 
-A resposta já traz `diagnosis`, `recommended_action` e
-`severity_assessed` na hora, esse endpoint (`/diagnose`) roda o grafo
-de forma síncrona e existe só para facilitar testes manuais durante o
-desenvolvimento.
+2. Revise o que está pendente (é isso que uma futura tela de aprovação
+   — Fase 6 — vai mostrar para um humano):
+   ```bash
+   curl http://localhost:8001/pending
+   ```
 
-### Fluxo real (assíncrono, via Alertmanager)
+3. Aprove (ou rejeite) a ação, usando o `thread_id` do passo 1:
+   ```bash
+   curl -X POST http://localhost:8001/approve/SEU_THREAD_ID_AQUI \
+     -H "Content-Type: application/json" \
+     -d '{"approved": true}'
+   ```
+   Se `action_type` era `restart_container`, o `app-fake` deve ser
+   reiniciado de verdade — confirme com:
+   ```bash
+   docker compose ps app-fake   # repare no "STATUS" / horário de início
+   ```
 
-O endpoint que o Alertmanager efetivamente chama é o `/webhook`, que
-responde imediatamente e processa em segundo plano (ver nota acima
-sobre timeout). Rode o incidente de verdade:
+4. Teste também o caminho de **rejeição** (`{"approved": false}`) e
+   confirme que `action_result` indica que nada foi executado.
+
+### Fluxo real de ponta a ponta (via Alertmanager)
 
 ```bash
 curl -X POST http://localhost:8000/chaos/start
 docker compose logs -f agent-orchestrator
 ```
 
-Depois de alguns segundos, consulte o resultado:
+Depois de alguns segundos, o incidente deve aparecer em `GET /pending`
+— aprove ou rejeite manualmente do mesmo jeito que no teste acima.
+Depois, confira o resultado final:
 
 ```bash
-curl http://localhost:8001/incidents        # lista todos os diagnósticos já concluídos
+curl http://localhost:8001/incidents
 ```
-
-Compare o `diagnosis` retornado com o conteúdo de
-`runbooks/runbook-high-cpu.md` para conferir se o raciocínio do agente
-faz sentido.
 
 ## Roadmap
 
@@ -275,13 +317,15 @@ faz sentido.
 - [x] Fase 2 — Chaos injection real com `stress-ng`
 - [x] Fase 3 — Base de conhecimento RAG (runbooks + embeddings locais + Qdrant)
 - [x] Fase 4 — Agentes multi-agente com LangGraph (triagem, retrieval, diagnóstico)
-- [ ] Fase 5 — Human-in-the-loop (aprovação de ações corretivas)
+- [x] Fase 5 — Human-in-the-loop (aprovação de ações corretivas)
 - [ ] Fase 6 — Dashboard
 - [ ] Fase 7 — Polimento e documentação final
 
-## Arquitetura (visão de produto final)
+## Próximos passos (Fase 6)
 
-O `agent-orchestrator` (Fase 4) terá acesso ao socket do Docker do host
-para executar ações corretivas aprovadas por um humano (ex: restart de
-container). Ver seção "Ações corretivas" assim que a Fase 5 for
-implementada.
+O `agent-orchestrator` já executa ações corretivas reais após aprovação
+humana (Fase 5). O que falta é uma **interface visual** para revisar e
+aprovar incidentes — hoje isso é feito via `curl` em `GET /pending` e
+`POST /approve/{thread_id}`. A Fase 6 substitui isso por um dashboard
+simples (provavelmente Streamlit) mostrando os incidentes pendentes,
+o diagnóstico do agente, e um botão de aprovar/rejeitar.
