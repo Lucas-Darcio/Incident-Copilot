@@ -79,6 +79,35 @@ async def receive_alert(request: Request, background_tasks: BackgroundTasks):
     if status == "resolved":
         thread_id_antigo = _alertas_em_tratamento.pop(fingerprint, None)
         print(f"[agent-orchestrator] alerta RESOLVIDO (fingerprint={fingerprint}) — liberado para novo diagnóstico no futuro")
+
+        # Se o incidente ainda estava esperando uma decisão humana quando
+        # o alerta resolveu sozinho (ex: o stress-ng atingiu o timeout de
+        # 120s antes de alguém aprovar/rejeitar), retomamos o grafo com
+        # approved=False — nenhuma ação é executada, porque não faz
+        # sentido "corrigir" um problema que já desapareceu — e movemos o
+        # incidente para "concluídos", ao invés de deixá-lo pendente para
+        # sempre.
+        if thread_id_antigo and thread_id_antigo in _pendentes:
+            config = {"configurable": {"thread_id": thread_id_antigo}}
+            resultado = incident_graph.invoke(Command(resume={"approved": False}), config=config)
+            pendente = _pendentes.pop(thread_id_antigo, {})
+
+            _diagnosticos[thread_id_antigo] = {
+                "thread_id": thread_id_antigo,
+                "fingerprint": fingerprint,
+                "approved": False,
+                "auto_resolved": True,
+                "diagnosis": pendente.get("diagnosis"),
+                "recommended_action": pendente.get("recommended_action"),
+                "action_result": (
+                    "Alerta resolvido automaticamente antes de uma decisão "
+                    "humana (ex: o problema desapareceu sozinho, ou o "
+                    "timeout de teste expirou) — nenhuma ação corretiva "
+                    "foi executada."
+                ),
+            }
+            print(f"[agent-orchestrator] thread_id={thread_id_antigo} auto-resolvido (estava pendente)")
+
         return {"status": "resolved_acknowledged", "fingerprint": fingerprint, "thread_id": thread_id_antigo}
 
     if fingerprint in _alertas_em_tratamento:

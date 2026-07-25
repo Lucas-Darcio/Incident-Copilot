@@ -88,6 +88,11 @@ sentence-transformers (all-MiniLM-L6-v2, local, sem custo de API)
 qdrant (vector database)
 
 postgres-agent (guarda o estado do grafo entre pausas — Fase 5)
+
+dashboard (Streamlit — Fase 6)
+      │  consome
+      ▼
+agent-orchestrator: GET /pending, POST /approve/{thread_id}, GET /incidents
 ```
 
 O `agent-orchestrator` roda um grafo LangGraph com 5 passos em sequência:
@@ -190,6 +195,7 @@ Serviços disponíveis:
 - `rag-service`: http://localhost:8002 (docs em `/docs`)
 - `qdrant`: http://localhost:6333/dashboard
 - `postgres-agent`: só uso interno (checkpointer do LangGraph), sem porta exposta
+- `dashboard`: http://localhost:8501
 
 ## Como testar — pipeline de incidentes (Fases 1 e 2)
 
@@ -310,6 +316,26 @@ Depois, confira o resultado final:
 curl http://localhost:8001/incidents
 ```
 
+## Como testar — Dashboard (Fase 6)
+
+Depois de disparar um ou mais incidentes (via `/diagnose`, ou disparando
+o chaos real com `curl -X POST http://localhost:8000/chaos/start`),
+abra:
+
+http://localhost:8501
+
+O layout mostra "Aguardando aprovação" (mais largo, à esquerda) ao lado
+de "Concluídos" (mais estreito, à direita), e atualiza sozinho a cada
+5 segundos — não precisa recarregar a página manualmente.
+
+> **O que acontece se o alerta resolver sozinho antes de alguém
+> decidir?** Isso pode acontecer no seu teste com `stress-ng`, já que
+> ele para sozinho depois de 120s. Nesse caso, o `agent-orchestrator`
+> retoma o grafo automaticamente com `approved=False` (nenhuma ação é
+> executada — não faz sentido "corrigir" um problema que já sumiu), e
+> o incidente aparece em "Concluídos" marcado com ⏱️, com a explicação
+> de que foi resolvido automaticamente.
+
 ## Roadmap
 
 - [x] Fase 0 — Setup do repositório
@@ -318,14 +344,13 @@ curl http://localhost:8001/incidents
 - [x] Fase 3 — Base de conhecimento RAG (runbooks + embeddings locais + Qdrant)
 - [x] Fase 4 — Agentes multi-agente com LangGraph (triagem, retrieval, diagnóstico)
 - [x] Fase 5 — Human-in-the-loop (aprovação de ações corretivas)
-- [ ] Fase 6 — Dashboard
+- [x] Fase 6 — Dashboard (Streamlit)
 - [ ] Fase 7 — Polimento e documentação final
 
-## Próximos passos (Fase 6)
+## Próximos passos (Fase 7)
 
-O `agent-orchestrator` já executa ações corretivas reais após aprovação
-humana (Fase 5). O que falta é uma **interface visual** para revisar e
-aprovar incidentes — hoje isso é feito via `curl` em `GET /pending` e
-`POST /approve/{thread_id}`. A Fase 6 substitui isso por um dashboard
-simples (provavelmente Streamlit) mostrando os incidentes pendentes,
-o diagnóstico do agente, e um botão de aprovar/rejeitar.
+O sistema está funcionalmente completo de ponta a ponta: incidente →
+diagnóstico multi-agente com RAG → aprovação humana → ação real → visível
+no dashboard. A Fase 7 é sobre polimento: revisar mensagens de erro,
+documentação, talvez um vídeo/GIF de demonstração para o README, e
+testes automatizados básicos.

@@ -102,6 +102,19 @@ services:
     networks:
       - copilot-net
 
+  # ---------- Dashboard (Fase 6) ----------
+  dashboard:
+    build: ./dashboard
+    container_name: dashboard
+    ports:
+      - "8501:8501"
+    environment:
+      - AGENT_ORCHESTRATOR_URL=http://agent-orchestrator:8001
+    depends_on:
+      - agent-orchestrator
+    networks:
+      - copilot-net
+
 networks:
   copilot-net:
     driver: bridge
