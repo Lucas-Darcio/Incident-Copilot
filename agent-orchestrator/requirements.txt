@@ -2,7 +2,12 @@ fastapi==0.115.0
 uvicorn==0.30.6
 httpx==0.27.2
 docker==7.1.0
-psycopg[binary]==3.2.3
+
+# Sem pin de versão exata: builds recentes de psycopg[binary] só
+# publicam wheel pré-compilado para versões novas do Python (ex: 3.14).
+# Fixar em uma versão exata antiga (ex: 3.2.3) quebra em ambientes com
+# Python mais novo por falta de wheel compatível.
+psycopg[binary]>=3.2.10
 
 # Este trio evolui muito rápido (várias releases por mês). Deixamos sem
 # pin de versão de propósito, para sempre puxar builds compatíveis mais

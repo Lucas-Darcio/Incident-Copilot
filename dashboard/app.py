@@ -69,6 +69,9 @@ st.caption(
 pendentes_resp = _get("/pending")
 pendentes = (pendentes_resp or {}).get("pendentes", {})
 
+processando_resp = _get("/processing")
+processando = (processando_resp or {}).get("processando", {})
+
 incidentes_resp = _get("/incidents")
 incidentes = (incidentes_resp or {}).get("incidentes", {})
 
@@ -78,40 +81,48 @@ incidentes = (incidentes_resp or {}).get("incidentes", {})
 col_pendentes, col_concluidos = st.columns([2, 1])
 
 with col_pendentes:
-    st.header("Aguardando aprovação")
+    st.header("Aguardando ação humana")
 
-    if not pendentes:
-        st.success("Nenhum incidente aguardando aprovação no momento.")
-    else:
-        for thread_id, incidente in pendentes.items():
-            with st.container(border=True):
-                st.subheader(incidente.get("alert_summary", "Alerta sem resumo"))
+    if not pendentes and not processando:
+        st.success("Nenhum incidente em andamento no momento.")
 
-                col_info, col_acao = st.columns([3, 1])
+    # "Em análise" primeiro — é o mais recente/urgente de acompanhar,
+    # já que o diagnóstico ainda está sendo gerado.
+    for thread_id, info in processando.items():
+        with st.container(border=True):
+            st.subheader(info.get("alert_summary", "Alerta sem resumo"))
+            st.info("🧠 Analisando o incidente... (buscando runbooks e consultando o LLM)")
+            st.caption(f"thread_id: `{thread_id}`")
 
-                with col_info:
-                    st.markdown(f"**Diagnóstico:** {incidente.get('diagnosis')}")
-                    st.markdown(f"**Ação recomendada:** {incidente.get('recommended_action')}")
+    for thread_id, incidente in pendentes.items():
+        with st.container(border=True):
+            st.subheader(incidente.get("alert_summary", "Alerta sem resumo"))
 
-                    severidade = incidente.get("severity_assessed", "desconhecida")
-                    _cor_severidade(severidade)(f"Severidade avaliada pelo agente: **{severidade}**")
+            col_info, col_acao = st.columns([3, 1])
 
-                    action_type = incidente.get("action_type")
-                    target = incidente.get("target_container")
-                    if action_type == "restart_container":
-                        st.markdown(f"⚙️ Ação automatizável: **reiniciar container `{target}`**")
-                    else:
-                        st.markdown("⚙️ Ação **não** automatizável — requer intervenção manual mesmo se aprovada")
+            with col_info:
+                st.markdown(f"**Diagnóstico:** {incidente.get('diagnosis')}")
+                st.markdown(f"**Ação recomendada:** {incidente.get('recommended_action')}")
 
-                    st.caption(f"thread_id: `{thread_id}`")
+                severidade = incidente.get("severity_assessed", "desconhecida")
+                _cor_severidade(severidade)(f"Severidade avaliada pelo agente: **{severidade}**")
 
-                with col_acao:
-                    if st.button("✅ Aprovar", key=f"aprovar_{thread_id}", use_container_width=True):
-                        _approve(thread_id, True)
-                        st.rerun()
-                    if st.button("❌ Rejeitar", key=f"rejeitar_{thread_id}", use_container_width=True):
-                        _approve(thread_id, False)
-                        st.rerun()
+                action_type = incidente.get("action_type")
+                target = incidente.get("target_container")
+                if action_type == "restart_container":
+                    st.markdown(f"⚙️ Ação automatizável: **reiniciar container `{target}`**")
+                else:
+                    st.markdown("⚙️ Ação **não** automatizável — requer intervenção manual mesmo se aprovada")
+
+                st.caption(f"thread_id: `{thread_id}`")
+
+            with col_acao:
+                if st.button("✅ Aprovar", key=f"aprovar_{thread_id}", use_container_width=True):
+                    _approve(thread_id, True)
+                    st.rerun()
+                if st.button("❌ Rejeitar", key=f"rejeitar_{thread_id}", use_container_width=True):
+                    _approve(thread_id, False)
+                    st.rerun()
 
 with col_concluidos:
     st.header("Concluídos")

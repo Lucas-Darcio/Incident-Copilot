@@ -1,356 +1,245 @@
-# Incident Copilot — Multi-Agent Human-in-the-Loop
+# 🚨 Incident Copilot
 
-## O que é este projeto (em termos simples)
+**Copiloto de resposta a incidentes com sistema multi-agente (LangGraph), RAG e aprovação humana obrigatória antes de qualquer ação corretiva real.**
 
-Quando um sistema de software (um site, um app, uma API) apresenta um
-problema: fica lento, para de responder, ou consome recursos demais;
-isso é chamado de **incidente**. Em qualquer empresa que opera software
-em produção, existe uma equipe (frequentemente chamada de **SRE** —
-*Site Reliability Engineering*, ou simplesmente "time de operações")
-responsável por perceber esses problemas rapidamente e corrigi-los
-antes que afetem muitos usuários (às vezes literalmente sendo acordada
-de madrugada para isso).
+Projeto de portfólio construído para aplicar, na prática, observabilidade, RAG, sistemas multi-agente e human-in-the-loop — com Python, Docker, LangGraph, LangChain e Postgres.
 
-O processo tradicional é assim: um alerta automático dispara, uma
-pessoa recebe a notificação, ela precisa **investigar** (olhar
-métricas, logs, documentação interna de "o que fazer quando X
-acontece") e só então decidir e aplicar uma correção. Esse processo de
-investigação manual é lento e depende muito da experiência de quem
-está de plantão naquele momento.
+---
 
-Este projeto constrói um **copiloto de IA** que automatiza a parte de
-*investigação e diagnóstico* desse processo: um sistema de múltiplos
-"agentes" de inteligência artificial que recebe o alerta automaticamente,
-busca em uma base de conhecimento (documentos internos de como resolver
-problemas parecidos) e propõe um diagnóstico e uma ação corretiva,
-tudo isso em segundos, ao invés de minutos ou horas de investigação
-manual.
+## Sumário
 
-**O ponto mais importante do projeto**: o sistema **nunca executa uma
-ação corretiva sozinho**. Ele só recomenda e uma pessoa real precisa
-revisar e aprovar antes de qualquer mudança de verdade acontecer (isso
-se chama **human-in-the-loop**). Isso é essencial
-porque IA pode errar, e ações em sistemas de produção (reiniciar um
-servidor, por exemplo) podem ter consequências sérias se aplicadas
-sem critério.
+- [O que é este projeto](#o-que-é-este-projeto)
+- [Por que isso importa no mercado](#por-que-isso-importa-no-mercado)
+- [Arquitetura](#arquitetura)
+- [Stack técnica](#stack-técnica)
+- [Como rodar](#como-rodar)
+- [Como testar cada parte](#como-testar-cada-parte)
+- [Decisões de arquitetura e aprendizados](#decisões-de-arquitetura-e-aprendizados)
+- [Testes automatizados e CI](#testes-automatizados-e-ci)
+- [Limitações conhecidas e próximos passos](#limitações-conhecidas-e-próximos-passos)
+- [Estrutura do repositório](#estrutura-do-repositório)
+- [Licença](#licença)
 
-### Por que isso importa no mercado
+---
 
-Incidentes de produção custam caro, não só em termos de receita
-perdida durante o problema, mas também no tempo (e estresse) da equipe
-técnica. Uma métrica muito usada na área é o **MTTR** (*Mean Time To
-Resolution*, o tempo médio até resolver um incidente); reduzir esse
-tempo é uma prioridade constante em empresas de tecnologia. Por isso,
-existe um mercado inteiro (geralmente chamado de **AIOps** — *AI for
-IT Operations*) de ferramentas que usam IA para acelerar exatamente
-essa etapa de diagnóstico. Alguns exemplos de aplicação real:
+## O que é este projeto
 
-- **Um e-commerce durante a Black Friday**: o checkout começa a ficar
-  lento. Ao invés do time de plantão vasculhar dashboards e logs na
-  correria, um copiloto como este já aparece com "causa provável:
-  esgotamento de conexões com o banco de dados, ação recomendada:
-  aumentar o pool de conexões", e o humano só precisa confirmar.
-- **Uma empresa de SaaS com uma API usada por outros sistemas**: quando
-  a API fica fora do ar às 3h da manhã, o engenheiro de plantão (que
-  acabou de acordar e não tem contexto nenhum do incidente) recebe já
-  um diagnóstico inicial baseado nos runbooks da empresa, ao invés de
-  começar a investigação do zero.
+Quando um sistema de software (um site, um app, uma API) fica lento, para de responder, ou consome recursos demais, isso é chamado de **incidente**. Em qualquer empresa que opera software em produção existe uma equipe (frequentemente chamada de **SRE** — _Site Reliability Engineering_) responsável por perceber esses problemas rapidamente e corrigi-los antes que afetem muitos usuários.
 
-Esse projeto é uma versão enxuta e de portfólio desse conceito, a
-mesma ideia central de ferramentas comerciais desse mercado, construída
-para eu aprender e demonstrar as peças técnicas por trás dela:
-observabilidade, RAG, sistemas multi-agente e aprovação humana.
+O processo tradicional é assim: um alerta automático dispara, uma pessoa recebe a notificação, ela precisa **investigar** (métricas, logs, documentação interna de "o que fazer quando X acontece") e só então decidir e aplicar uma correção. Esse processo manual é lento e depende muito da experiência de quem está de plantão.
 
-## Arquitetura geral
+Este projeto constrói um **copiloto de IA** que automatiza a parte de _investigação e diagnóstico_: um sistema de múltiplos agentes que recebe o alerta automaticamente, busca numa base de conhecimento (runbooks) e propõe um diagnóstico e uma ação corretiva em segundos, ao invés de minutos ou horas.
+
+**O ponto mais importante do projeto**: o sistema **nunca executa uma ação corretiva sozinho**. Ele só recomenda e uma pessoa real precisa revisar e aprovar antes de qualquer mudança de verdade acontecer (**human-in-the-loop**). Isso é essencial porque IA pode errar, e ações em produção (reiniciar um servidor, por exemplo) podem ter consequências sérias se aplicadas sem critério.
+
+## Por que isso importa no mercado
+
+Incidentes de produção custam caro, não só em receita perdida, mas no tempo (e estresse) da equipe técnica. Uma métrica muito usada na área é o **MTTR** (_Mean Time To Resolution_); reduzir esse tempo é prioridade constante em empresas de tecnologia. Existe um mercado inteiro para isso, chamado **AIOps** (_AI for IT Operations_). Dois exemplos de aplicação real:
+
+- **E-commerce durante a Black Friday**: o checkout fica lento. Ao invés do time de plantão vasculhar dashboards na correria, o copiloto já aparece com "causa provável: esgotamento de conexões com o banco, ação recomendada: aumentar o pool", o humano só confirma.
+- **SaaS com API usada por outros sistemas**: a API cai às 3h da manhã. O engenheiro de plantão (que acabou de acordar, sem contexto nenhum) recebe um diagnóstico inicial baseado nos runbooks da empresa, ao invés de começar do zero.
+
+Este projeto é uma versão enxuta desse conceito, construída para eu aprender e demonstrar as peças técnicas por trás dele: observabilidade, RAG, sistemas multi-agente e aprovação humana.
+
+## Arquitetura
 
 ```
 app-fake (mede CPU real via cgroup + roda stress-ng sob demanda)
       │  scrape a cada 5s
       ▼
-prometheus (avalia regras)
-      │  se cpu_usage_percent > 80% por 15s
-      ▼
-alertmanager (agrupa e envia)
-      │  webhook HTTP POST
-      ▼
-agent-orchestrator (LangGraph: triagem → retrieval → diagnóstico →
-                     aprovação humana → execução da ação)
-      │  consulta
-      ▼
-rag-service (busca semântica nos runbooks)
+prometheus (avalia regras) ──alerta──▶ alertmanager (agrupa e envia)
+                                              │  webhook HTTP POST
+                                              ▼
+                                    agent-orchestrator
+                                    ┌─────────────────────────────┐
+                                    │  LangGraph:                 │
+                                    │  triagem → retrieval →      │
+                                    │  diagnóstico → aprovação    │
+                                    │  humana → execução da ação  │
+                                    └─────────────────────────────┘
+                                       │ consulta         │ estado
+                                       ▼                  ▼
+                                 rag-service         postgres-agent
+                                       │
+                                       ▼
+                    runbooks/*.md → sentence-transformers → qdrant
 
-runbooks/*.md
-      │  leitura + chunking por seção
-      ▼
-sentence-transformers (all-MiniLM-L6-v2, local, sem custo de API)
-      │  gera embeddings
-      ▼
-qdrant (vector database)
-
-postgres-agent (guarda o estado do grafo entre pausas — Fase 5)
-
-dashboard (Streamlit — Fase 6)
-      │  consome
-      ▼
-agent-orchestrator: GET /pending, POST /approve/{thread_id}, GET /incidents
+                                       ▲
+                                       │
+                                  dashboard (Streamlit)
+                        GET /processing, /pending, /incidents
+                        POST /approve/{thread_id}
 ```
 
-O `agent-orchestrator` roda um grafo LangGraph com 5 passos em sequência:
+**Fluxo ponta a ponta**: um serviço monitorado (`app-fake`) expõe métricas → o Prometheus detecta anomalia e dispara um alerta → o Alertmanager notifica o `agent-orchestrator` → um grafo de 5 agentes (LangGraph) faz triagem, busca runbooks relevantes (RAG) e gera um diagnóstico com LLM → o grafo **pausa**, esperando um humano aprovar ou rejeitar pelo dashboard → só então (se aprovado) a ação corretiva é executada de verdade via Docker SDK.
 
-1. **Triagem**: interpreta o payload bruto do Alertmanager, extrai um
-   resumo em texto + a severidade original + o nome do container afetado
-2. **Retrieval**: usa esse resumo como query no `rag-service` (Fase 3)
-3. **Diagnóstico**: usa um LLM (`gemma-4-31b-it`, via API do Google) para
-   sintetizar causa provável + ação recomendada + se a ação é
-   automatizável
-4. **Aprovação humana** *(Fase 5)*: PAUSA o grafo com `interrupt()` e
-   expõe o diagnóstico via `GET /pending` — a execução só continua
-   quando um humano chama `POST /approve/{thread_id}`
-5. **Execução da ação** *(Fase 5)*: só roda depois da aprovação. Hoje a
-   única ação automatizável é **reiniciar o container afetado**,
-   executada via Docker SDK. Qualquer ação rejeitada, ou que o modelo
-   tenha marcado como não-automatizável, não altera nada no sistema.
+## Stack técnica
 
-> **Nota de segurança importante**: o `agent-orchestrator` tem acesso ao
-> socket do Docker do host (`/var/run/docker.sock` montado como volume)
-> para poder executar ações reais em outros containers. Isso equivale,
-> na prática, a dar acesso root ao host para esse container — aceitável
-> aqui por ser um projeto local de portfólio, mas em produção o
-> recomendado seria isolar isso atrás de uma API intermediária com uma
-> allowlist restrita de comandos, não dar acesso livre ao socket.
->
-> **Nota sobre persistência (Fase 5)**: o checkpointer agora é
-> **Postgres** (serviço `postgres-agent`), não mais em memória. Isso é
-> essencial porque um incidente pode ficar pausado esperando aprovação
-> humana por minutos, horas, ou até ser esquecido — o estado precisa
-> sobreviver mesmo que o container do `agent-orchestrator` reinicie
-> nesse meio tempo. Uma limitação conhecida (comum em sistemas reais
-> com human-in-the-loop): se ninguém nunca aprovar/rejeitar um
-> incidente, ele fica pendente para sempre no Postgres — em produção,
-> normalmente se implementa um job que expira aprovações não respondidas
-> depois de um tempo (ex: 24h).
-
-> **Nota sobre custo de LLM**: o Alertmanager reenvia um alerta `firing`
-> periodicamente enquanto ele continuar ativo (`repeat_interval`). Sem
-> controle, isso chamaria o LLM de novo a cada reenvio do MESMO
-> incidente. O `agent-orchestrator` deduplica por `fingerprint` (o
-> identificador estável que o Alertmanager gera por incidente), reenvios
-> são ignorados sem custo, e o controle é liberado assim que o alerta é
-> marcado como `resolved`, garantindo que um incidente futuro do mesmo
-> tipo seja tratado como novo.
->
-> **Nota sobre timeout do Alertmanager**: o campo `group_interval`
-> (configurado em `alertmanager.yml`) também define o tempo máximo que o
-> Alertmanager espera pela resposta do webhook antes de desistir
-> ("context deadline exceeded" nos logs). Como nosso processamento
-> envolve chamadas de rede ao RAG e ao LLM, ele pode ultrapassar esse
-> tempo facilmente. Por isso, o `/webhook` responde **imediatamente**
-> (aceitando o alerta) e processa o diagnóstico em segundo plano
-> (`BackgroundTasks`), o resultado fica disponível para consulta em
-> `GET /incidents/{fingerprint}`.
-
-> **Nota de arquitetura (Fase 2)**: optei por rodar o `stress-ng`
-> **dentro do próprio container `app-fake`** (via subprocess) ao invés
-> de um `chaos-injector` externo, para manter o comportamento
-> determinístico e reprodutível em qualquer máquina. Simular um
-> "vizinho barulhento" (carga externa disputando os mesmos núcleos
-> físicos) fica como exercício avançado futuro.
->
-> **Nota técnica importante (Fase 2)**: a métrica `cpu_usage_percent` é
-> lida diretamente do **cgroup** do container (o mesmo mecanismo que o
-> `docker stats` usa), e expressa como *percentual do limite do próprio
-> container*, não como percentual de um núcleo inteiro do host. Isso
-> evita um erro comum: usar `psutil.cpu_percent()` puro dentro de um
-> container faz a leitura vir de `/proc/stat`, que ainda reflete a
-> máquina host inteira, gerando números artificialmente baixos e que
-> nunca cruzam o threshold de alerta.
-
-## Configuração (necessária a partir da Fase 4)
-
-O `agent-orchestrator` precisa de uma chave da API do Google (Gemini/Gemma)
-e, a partir da Fase 5, de uma senha para o Postgres do checkpointer:
-
-```bash
-cp .env.example .env
-# edite o .env e preencha GOOGLE_API_KEY e POSTGRES_PASSWORD
-```
-
-O `.env` está no `.gitignore`.
+| Camada                  | Tecnologia                                                            | Por quê                                                                                                                      |
+| ----------------------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Orquestração de agentes | **LangGraph**                                                         | Controle explícito de fluxo multi-agente + suporte nativo a pausar/retomar (`interrupt()`), essencial para human-in-the-loop |
+| LLM                     | **Google Gemini API** (`gemma-4-31b-it`) via `langchain-google-genai` | Modelo de baixo custo, suficiente para tarefas estruturadas (com maior budget, melhor resultado)                             |
+| RAG / busca semântica   | **Qdrant** + `sentence-transformers` (`all-MiniLM-L6-v2`)             | Embedding local (sem custo de API, sem dependência externa)                                                                  |
+| Backend                 | **FastAPI** (Python)                                                  | Assíncrono, fácil de expor endpoints para agentes e aprovação humana                                                         |
+| Persistência do grafo   | **PostgreSQL** (checkpointer do LangGraph)                            | Estado de um incidente pausado sobrevive a restarts do container                                                             |
+| Observabilidade         | **Prometheus** + **Alertmanager**                                     | Padrão de mercado para métricas e alertas                                                                                    |
+| Interface               | **Streamlit**                                                         | Dashboard funcional rápido, sem precisar de um frontend dedicado                                                             |
+| Infraestrutura          | **Docker Compose**                                                    | Todos os serviços isolados e reproduzíveis em qualquer máquina                                                               |
+| Testes / CI             | **pytest** + **GitHub Actions**                                       | Testes automatizados das partes puras do sistema, rodando a cada push                                                        |
 
 ## Como rodar
 
 ```bash
+git clone git@github.com:Lucas-Darcio/Incident-Copilot.git
+cd Incident-Copilot
+
+cp .env.example .env
+# edite o .env e preencha GOOGLE_API_KEY e POSTGRES_PASSWORD
+
 docker compose up --build
 ```
 
-> O primeiro build do `rag-service` demora alguns minutos, ele baixa o
-> PyTorch (CPU-only) e o modelo de embedding durante a construção da
-> imagem, para o container já subir pronto para uso.
+> O primeiro build demora alguns minutos, pois o `rag-service` baixa o PyTorch (CPU-only) e o modelo de embedding durante a construção da imagem.
 
-Serviços disponíveis:
-- `app-fake`: http://localhost:8000 (docs em `/docs`)
-- `prometheus`: http://localhost:9090
-- `alertmanager`: http://localhost:9093
-- `agent-orchestrator`: http://localhost:8001 (docs em `/docs`)
-- `rag-service`: http://localhost:8002 (docs em `/docs`)
-- `qdrant`: http://localhost:6333/dashboard
-- `postgres-agent`: só uso interno (checkpointer do LangGraph), sem porta exposta
-- `dashboard`: http://localhost:8501
+**Serviços disponíveis:**
 
-## Como testar — pipeline de incidentes (Fases 1 e 2)
+| Serviço              | URL                             | Descrição                              |
+| -------------------- | ------------------------------- | -------------------------------------- |
+| `app-fake`           | http://localhost:8000/docs      | Serviço monitorado (simula incidentes) |
+| `prometheus`         | http://localhost:9090           | Métricas e alertas                     |
+| `alertmanager`       | http://localhost:9093           | Notificação de alertas                 |
+| `agent-orchestrator` | http://localhost:8001/docs      | Grafo de agentes + API de aprovação    |
+| `rag-service`        | http://localhost:8002/docs      | Busca semântica nos runbooks           |
+| `qdrant`             | http://localhost:6333/dashboard | Vector database                        |
+| `dashboard`          | http://localhost:8501           | **Painel de aprovação humana**         |
 
-1. Confirme que tudo subiu:
-   ```bash
-   curl http://localhost:8000/health
-   ```
+## Como testar cada parte
 
-2. Dispare o incidente real (stress-ng ocupando 1 núcleo por até 120s):
-   ```bash
-   curl -X POST http://localhost:8000/chaos/start
-   ```
-
-3. Acompanhe a métrica subindo em tempo real:
-   http://localhost:9090/graph → busque por `cpu_usage_percent`
-
-   Dica: rode `docker stats app-fake` em outro terminal para comparar
-   com o consumo real de CPU/memória do container.
-
-4. Depois de ~15-20s, veja o alerta ativo no Prometheus:
-   http://localhost:9090/alerts
-
-5. Confira nos logs do `agent-orchestrator` que o alerta chegou e foi
-   processado pelos 3 agentes (triagem, retrieval, diagnóstico):
-   ```bash
-   docker compose logs -f agent-orchestrator
-   ```
-   Você deve ver algo como:
-   ```
-   [agent-orchestrator] thread_id=...
-     alerta: HighCPUUsage: CPU alta detectada em app-fake:8000. ...
-     diagnóstico: ...
-     ação recomendada: ...
-     severidade avaliada: ...
-   ```
-
-6. Pare o incidente manualmente (ou espere os 120s do timeout de
-   segurança) e veja o alerta ser resolvido:
-   ```bash
-   curl -X POST http://localhost:8000/chaos/stop
-   ```
-
-## Como testar — RAG (Fase 3)
-
-1. Popule o Qdrant com os runbooks:
-   ```bash
-   curl -X POST http://localhost:8002/ingest
-   ```
-   Deve retornar algo como `{"chunks_indexados": 20}`.
-
-2. Teste uma busca semântica:
-   ```bash
-   curl -X POST http://localhost:8002/search \
-     -H "Content-Type: application/json" \
-     -d '{"query": "container consumindo muito processamento", "top_k": 3}'
-   ```
-   O resultado esperado é o runbook de CPU alta aparecer em primeiro
-   lugar (maior `score`), mesmo sem a palavra "CPU" aparecer
-   literalmente na pergunta, isso é a busca semântica funcionando
-   (compara *significado*, não só palavras-chave).
-
-3. Explore a coleção diretamente pelo painel do Qdrant:
-   http://localhost:6333/dashboard
-
-## Como testar — Agentes + Human-in-the-Loop (Fases 4 e 5)
-
-### Teste manual passo a passo (sem depender do Alertmanager)
-
-1. Dispare um incidente de teste — o grafo roda até pausar, esperando aprovação:
-   ```bash
-   curl -X POST http://localhost:8001/diagnose \
-     -H "Content-Type: application/json" \
-     -d '{
-       "alertname": "HighCPUUsage",
-       "summary": "CPU alta detectada em app-fake:8000",
-       "description": "cpu_usage_percent está em 97% (limite: 80%) há mais de 15s",
-       "severity": "critical",
-       "instance": "app-fake:8000"
-     }'
-   ```
-   A resposta traz `"status": "pending_approval"`, junto com `diagnosis`,
-   `recommended_action`, `action_type` e um `thread_id` — **guarde esse
-   `thread_id`**, você vai precisar dele no próximo passo.
-
-2. Revise o que está pendente (é isso que uma futura tela de aprovação
-   — Fase 6 — vai mostrar para um humano):
-   ```bash
-   curl http://localhost:8001/pending
-   ```
-
-3. Aprove (ou rejeite) a ação, usando o `thread_id` do passo 1:
-   ```bash
-   curl -X POST http://localhost:8001/approve/SEU_THREAD_ID_AQUI \
-     -H "Content-Type: application/json" \
-     -d '{"approved": true}'
-   ```
-   Se `action_type` era `restart_container`, o `app-fake` deve ser
-   reiniciado de verdade — confirme com:
-   ```bash
-   docker compose ps app-fake   # repare no "STATUS" / horário de início
-   ```
-
-4. Teste também o caminho de **rejeição** (`{"approved": false}`) e
-   confirme que `action_result` indica que nada foi executado.
-
-### Fluxo real de ponta a ponta (via Alertmanager)
+**1. Disparar um incidente real** (CPU alta por até 120s, contida por limite de recursos do container):
 
 ```bash
 curl -X POST http://localhost:8000/chaos/start
-docker compose logs -f agent-orchestrator
 ```
 
-Depois de alguns segundos, o incidente deve aparecer em `GET /pending`
-— aprove ou rejeite manualmente do mesmo jeito que no teste acima.
-Depois, confira o resultado final:
+Abra **http://localhost:8501** — o incidente aparece quase imediatamente com "🧠 Analisando...", e alguns segundos depois ganha diagnóstico completo e botões de aprovar/rejeitar.
+
+**2. Testar sem esperar o Prometheus** (mais rápido, para desenvolvimento):
 
 ```bash
-curl http://localhost:8001/incidents
+curl -X POST http://localhost:8001/diagnose \
+  -H "Content-Type: application/json" \
+  -d '{"alertname": "HighCPUUsage", "summary": "CPU alta em app-fake:8000",
+       "description": "97% de uso", "severity": "critical", "instance": "app-fake:8000"}'
+
+# copie o thread_id da resposta e aprove/rejeite:
+curl -X POST http://localhost:8001/approve/SEU_THREAD_ID \
+  -H "Content-Type: application/json" -d '{"approved": true}'
 ```
 
-## Como testar — Dashboard (Fase 6)
+**3. Testar o RAG isoladamente:**
 
-Depois de disparar um ou mais incidentes (via `/diagnose`, ou disparando
-o chaos real com `curl -X POST http://localhost:8000/chaos/start`),
-abra:
+```bash
+curl -X POST http://localhost:8002/ingest
+curl -X POST http://localhost:8002/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "container consumindo muito processamento", "top_k": 3}'
+```
 
-http://localhost:8501
+Repare que a busca encontra o runbook certo mesmo sem a palavra "CPU" aparecer na pergunta, isso é busca semântica (por significado), não por palavra-chave.
 
-O layout mostra "Aguardando aprovação" (mais largo, à esquerda) ao lado
-de "Concluídos" (mais estreito, à direita), e atualiza sozinho a cada
-5 segundos — não precisa recarregar a página manualmente.
+## Decisões de arquitetura e aprendizados
 
-> **O que acontece se o alerta resolver sozinho antes de alguém
-> decidir?** Isso pode acontecer no seu teste com `stress-ng`, já que
-> ele para sozinho depois de 120s. Nesse caso, o `agent-orchestrator`
-> retoma o grafo automaticamente com `approved=False` (nenhuma ação é
-> executada — não faz sentido "corrigir" um problema que já sumiu), e
-> o incidente aparece em "Concluídos" marcado com ⏱️, com a explicação
-> de que foi resolvido automaticamente.
+Esta seção documenta as decisões técnicas mais importantes do projeto, e por quê. Organizado por tema, não por ordem cronológica de construção.
 
-## Roadmap
+### Observabilidade e medição de recursos em containers
 
-- [x] Fase 0 — Setup do repositório
-- [x] Fase 1 — Ambiente alvo + observabilidade (Prometheus/Alertmanager)
-- [x] Fase 2 — Chaos injection real com `stress-ng`
-- [x] Fase 3 — Base de conhecimento RAG (runbooks + embeddings locais + Qdrant)
-- [x] Fase 4 — Agentes multi-agente com LangGraph (triagem, retrieval, diagnóstico)
-- [x] Fase 5 — Human-in-the-loop (aprovação de ações corretivas)
-- [x] Fase 6 — Dashboard (Streamlit)
-- [ ] Fase 7 — Polimento e documentação final
+- **`cpu_usage_percent` é lido diretamente do cgroup do container** (o mesmo mecanismo que o `docker stats` usa), não via `psutil.cpu_percent()` puro. Motivo: dentro de um container Linux, `/proc/stat` ainda reflete a máquina host inteira, não o que foi alocado para aquele container, ou seja, usar `psutil` puro gera números artificialmente baixos que nunca cruzam o threshold de alerta.
+- **A métrica é expressa como percentual do _próprio limite_ do container** (ex: 100% = usando toda a CPU alocada), não como percentual de um núcleo inteiro do host. É assim que ferramentas reais (cAdvisor, Kubernetes) calculam utilização, a pergunta certa é "está usando toda a capacidade que foi alocada?", não "quantos núcleos do host inteiro?".
+- **`stress-ng` roda dentro do próprio container monitorado** (via subprocess), ao invés de um container de "chaos injection" externo. Isso mantém o comportamento determinístico e reprodutível em qualquer máquina, um container externo disputando núcleos físicos com outro é um cenário real ("vizinho barulhento"), mas seu resultado depende de quantos núcleos a máquina de quem roda o projeto tem, o que tornaria os testes inconsistentes.
 
-## Próximos passos (Fase 7)
+### RAG: chunking e escolha de embeddings
 
-O sistema está funcionalmente completo de ponta a ponta: incidente →
-diagnóstico multi-agente com RAG → aprovação humana → ação real → visível
-no dashboard. A Fase 7 é sobre polimento: revisar mensagens de erro,
-documentação, talvez um vídeo/GIF de demonstração para o README, e
-testes automatizados básicos.
+- **Chunking por seção markdown** (`## Sintomas`, `## Ações recomendadas`, etc.), não por tamanho fixo de caracteres. Os runbooks já têm estrutura previsível, e cada seção já é semanticamente coesa por si só, o que evita cortar uma ideia no meio, um erro clássico de RAG mal feito.
+- **Cada chunk é prefixado com o título do documento + nome da seção** antes de gerar o embedding (contextual chunking). Sem isso, uma seção como "Ações recomendadas: reiniciar o container" fica genérica demais isolada do resto do documento, o prefixo mantém o contexto semântico no vetor gerado.
+- **Embedding local** (`sentence-transformers`, modelo `all-MiniLM-L6-v2`) ao invés de API paga (OpenAI/Cohere). É um modelo pequeno (~80MB), roda em CPU, sem custo recorrente e sem dependência de rede para essa etapa específica.
+
+### Orquestração de agentes: por que LangGraph (não só LangChain "clássico")
+
+O padrão antigo do LangChain (`AgentExecutor`, funcionava como um agente decidindo sozinho quais tools chamar em loop) hoje é construído **sobre o LangGraph por baixo dos panos** e a própria documentação do LangChain recomenda LangGraph para qualquer coisa além do trivial. Motivos concretos para este projeto:
+
+- **Múltiplos agentes com papéis fixos** (triagem → retrieval → diagnóstico) mapeiam naturalmente para nós de um grafo com controle explícito.
+- **Human-in-the-loop precisa de `interrupt()` + checkpointer** — não existe equivalente direto disso no `AgentExecutor` clássico.
+- Tools, mensagens (`SystemMessage`/`HumanMessage`) e chat models continuam sendo LangChain puro — LangGraph é uma camada de orquestração por cima, não uma substituição.
+
+### Custo e resiliência de chamadas a LLM
+
+- **Deduplicação de alertas por `fingerprint`**: o Alertmanager reenvia um alerta `firing` periodicamente enquanto ele continuar ativo. Sem controle, isso chamaria o LLM de novo a cada reenvio do MESMO incidente. O `agent-orchestrator` ignora reenvios do mesmo fingerprint, liberando o controle apenas quando o alerta é `resolved`.
+- **Parsing de JSON com múltiplas camadas de fallback**: modelos menores/mais baratos (como o Gemma usado aqui) ocasionalmente truncam ou geram JSON malformado. O parser tenta, em ordem: (1) JSON válido completo, (2) recuperação parcial via regex tolerante a strings truncadas, (3) fallback total com o texto bruto. Em todos os casos, **incerteza nunca vira automação**, então o campo `acao_automatizavel` cai para `false` por padrão sempre que não pode ser confirmado, sendo uma limitação do projeto.
+- **Resposta assíncrona no webhook**: o campo `group_interval` do Alertmanager também define o timeout de espera pela resposta do webhook. Como o processamento (RAG + LLM) pode ultrapassar esse tempo, o `/webhook` responde imediatamente (aceitando o alerta) e processa em segundo plano (`BackgroundTasks`), evitando falsos "notify failed" no Alertmanager.
+
+### Human-in-the-loop de verdade
+
+- **`interrupt()` do LangGraph pausa o grafo** antes de qualquer ação corretiva, expondo o diagnóstico via `GET /pending`. A execução só continua com `POST /approve/{thread_id}` chamando `Command(resume=...)`.
+- **Checkpointer Postgres** (não em memória): um incidente pode ficar pausado esperando aprovação por minutos ou horas, e o estado precisa sobreviver mesmo que o `agent-orchestrator` reinicie nesse meio tempo.
+- **Auto-resolução de incidentes pendentes**: se o alerta original resolver sozinho (ex: o `stress-ng` atinge seu timeout) antes de qualquer decisão humana, o grafo é retomado automaticamente com `approved=False`, pois não faz sentido "corrigir" um problema que já desapareceu, e o incidente não fica pendente para sempre.
+- **Nota de segurança**: o `agent-orchestrator` acessa o socket do Docker do host (`/var/run/docker.sock`) para executar ações reais. Isso equivale, na prática, a dar acesso root ao host para esse container, o que é aceitável para um projeto local de portfólio, mas em produção, obviamente, o recomendado é isolar isso atrás de uma API intermediária com allowlist restrita de comandos.
+
+### Assincronia e experiência de uso
+
+- **Estado "em análise" antes do diagnóstico ficar pronto**: a extração do resumo do alerta (`extrair_info_alerta`) é pura interpretação de texto, sem I/O, por isso é chamada imediatamente ao receber o alerta, e o dashboard mostra o incidente na hora (com um aviso de "🧠 Analisando...") ao invés de ficar "mudo" enquanto o RAG + LLM processam em segundo plano.
+
+### Testabilidade: separar lógica pura de I/O
+
+- **`parsing.py`** (agent-orchestrator) e **`chunking.py`** (rag-service) contêm só funções puras (sem chamadas de rede, sem LLM, sem Docker). Isso permite testar a lógica mais propensa a bugs, como parsing de respostas malformadas, chunking de markdown, com testes rápidos que não dependem de infraestrutura real.
+
+## Testes automatizados e CI
+
+```bash
+# rag-service (rápido, sem PyTorch)
+cd rag-service && pip install -r requirements-dev.txt && pytest tests/ -v
+
+# agent-orchestrator (precisa das dependências completas)
+cd agent-orchestrator
+pip install -r requirements.txt -r requirements-dev.txt
+GOOGLE_API_KEY=dummy pytest tests/ -v
+```
+
+Um workflow do GitHub Actions (`.github/workflows/tests.yml`) roda esses testes automaticamente a cada `push`/PR. Cobertura atual:
+
+- `parsing.py`: extração de alerta, normalização de resposta do LLM, parsing de JSON válido/truncado/inválido
+- `chunking.py`: divisão de runbooks por seção, casos-limite (documento vazio, seção vazia, sem título)
+- `execute_action_node`: restart bem-sucedido, container não encontrado, ação rejeitada, ação não automatizável, falha genérica do Docker — tudo com um cliente Docker **mockado** (não precisa de acesso real ao socket para rodar os testes)
+
+## Limitações conhecidas e próximos passos
+
+Documentadas de propósito para mostrar que essas decisões foram conscientes, não esquecidas:
+
+- **Sem autenticação**: qualquer pessoa com acesso à rede pode chamar `/approve` diretamente. Aceitável para um projeto local; em produção exigiria autenticação (API key, OAuth).
+- **Sem expiração de incidentes pendentes**: se um incidente nunca for aprovado/rejeitado nem resolvido sozinho, ele fica pendente no Postgres indefinidamente. Um job de expiração por TTL seria o próximo passo natural.
+- **Versões do LangChain/LangGraph não travadas**: o ecossistema muda muito rápido; travar via `pip freeze` é recomendado antes de qualquer uso mais sério além de portfólio.
+- **Sem "vizinho barulhento" real**: o chaos engineering roda dentro do próprio container monitorado, não como carga externa disputando núcleos físicos (decisão consciente, ver seção de decisões acima).
+
+## Estrutura do repositório
+
+```
+Incident-Copilot/
+├── app-fake/              # Serviço monitorado (métricas + chaos engineering)
+├── prometheus/            # Configuração de métricas e regras de alerta
+├── alertmanager/          # Configuração de notificação de alertas
+├── rag-service/           # Busca semântica (embeddings + Qdrant)
+│   ├── chunking.py        #   lógica pura de chunking (testável)
+│   └── tests/
+├── agent-orchestrator/    # Grafo multi-agente (LangGraph) + API
+│   ├── parsing.py         #   lógica pura de parsing (testável)
+│   ├── graph.py           #   definição do grafo e dos 5 agentes
+│   └── tests/
+├── dashboard/             # Interface Streamlit de aprovação
+├── runbooks/              # Base de conhecimento (markdown)
+├── .github/workflows/     # CI (GitHub Actions)
+├── docker-compose.yml
+└── .env.example
+```
+
+## Licença
+
+Este projeto está sob a licença MIT — veja [LICENSE](LICENSE).

@@ -3,13 +3,14 @@ Serviço de RAG (Retrieval-Augmented Generation) — Fase 3.
 
 Responsável por:
 1. Ler os runbooks em markdown (pasta /app/runbooks, montada como volume)
-2. Quebrar cada runbook em chunks menores (por seção "## ")
+2. Quebrar cada runbook em chunks menores (por seção "## ") — lógica em chunking.py
 3. Gerar embeddings locais (sentence-transformers, sem depender de API paga)
 4. Guardar tudo no Qdrant (vector database)
 5. Expor um endpoint de busca semântica para testar isoladamente,
    antes de conectar isso a agentes na Fase 4.
 """
 import glob
+import logging
 import os
 
 from fastapi import FastAPI
@@ -17,6 +18,14 @@ from pydantic import BaseModel
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
 from sentence_transformers import SentenceTransformer
+
+from chunking import chunk_markdown
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+)
+logger = logging.getLogger("rag-service")
 
 app = FastAPI(title="rag-service")
 
@@ -30,46 +39,6 @@ model = SentenceTransformer(EMBEDDING_MODEL_NAME)
 EMBEDDING_DIM = model.get_sentence_embedding_dimension()
 
 qdrant = QdrantClient(host="qdrant", port=6333)
-
-
-# --- Chunking --------------------------------------------------------------
-def _chunk_markdown(text: str, source: str) -> list[dict]:
-    """
-    Quebra um runbook em pedaços por seção (cabeçalhos "## "). Cada chunk
-    carrega o título do documento + o nome da seção, para que o texto
-    embutido (embedding) mantenha contexto mesmo isolado do resto do
-    arquivo. Essa granularidade (por seção) funciona bem para nossos
-    runbooks porque cada seção (Sintomas, Causas, Ações...) já é
-    semanticamente coesa por si só.
-    """
-    lines = text.strip().split("\n")
-    title = lines[0].lstrip("#").strip() if lines and lines[0].startswith("#") else source
-
-    chunks = []
-    current_header = None
-    current_lines: list[str] = []
-
-    def _flush():
-        content = "\n".join(current_lines).strip()
-        if content:
-            chunks.append(
-                {
-                    "text": f"{title} — {current_header or title}\n{content}",
-                    "source": source,
-                    "section": current_header or title,
-                }
-            )
-
-    for line in lines[1:]:
-        if line.startswith("## "):
-            _flush()
-            current_header = line.lstrip("#").strip()
-            current_lines = []
-        else:
-            current_lines.append(line)
-    _flush()
-
-    return chunks
 
 
 def _ingest_all_runbooks() -> int:
@@ -88,9 +57,10 @@ def _ingest_all_runbooks() -> int:
     for filepath in sorted(glob.glob(os.path.join(RUNBOOKS_DIR, "*.md"))):
         text = open(filepath, encoding="utf-8").read()
         source = os.path.basename(filepath)
-        all_chunks.extend(_chunk_markdown(text, source))
+        all_chunks.extend(chunk_markdown(text, source))
 
     if not all_chunks:
+        logger.warning("Nenhum runbook encontrado em %s", RUNBOOKS_DIR)
         return 0
 
     texts = [c["text"] for c in all_chunks]
@@ -109,6 +79,7 @@ def _ingest_all_runbooks() -> int:
         for i in range(len(all_chunks))
     ]
     qdrant.upsert(collection_name=COLLECTION_NAME, points=points)
+    logger.info("Ingestão concluída: %d chunks indexados", len(points))
     return len(points)
 
 

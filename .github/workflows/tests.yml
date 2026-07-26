@@ -1,0 +1,43 @@
+name: Testes
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # Testes do rag-service: só a lógica de chunking (chunking.py), que
+  # não depende de PyTorch/sentence-transformers — mantém esse job
+  # rápido, sem precisar instalar dependências pesadas só para testar
+  # uma função pura de texto.
+  test-rag-service:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Instalar dependências de teste
+        run: pip install -r rag-service/requirements-dev.txt
+      - name: Rodar testes de chunking
+        run: python -m pytest rag-service/tests -v
+
+  # Testes do agent-orchestrator: parsing.py (puro) + execute_action_node
+  # (com Docker mockado) — precisa das dependências completas para
+  # importar graph.py, mas nenhuma chamada de rede real acontece.
+  test-agent-orchestrator:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Instalar dependências
+        run: |
+          pip install -r agent-orchestrator/requirements.txt
+          pip install -r agent-orchestrator/requirements-dev.txt
+      - name: Rodar testes
+        env:
+          GOOGLE_API_KEY: dummy-key-para-testes
+        run: python -m pytest agent-orchestrator/tests -v

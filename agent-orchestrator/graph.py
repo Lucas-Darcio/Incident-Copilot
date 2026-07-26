@@ -8,10 +8,13 @@ Cinco passos em sequência:
   4. human_approval_node  - PAUSA o grafo (interrupt()) esperando aprovação humana
   5. execute_action_node  - só roda DEPOIS da aprovação; executa a ação real
                             via Docker SDK (ex: reiniciar o container afetado)
+
+A lógica de parsing (extração de texto do alerta, interpretação da
+resposta do LLM) vive em parsing.py — um módulo sem dependências
+pesadas, para ser testável isoladamente (ver tests/test_parsing.py).
 """
-import json
+import logging
 import os
-import re
 from typing import Optional, TypedDict
 
 import docker
@@ -24,6 +27,10 @@ from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 from psycopg.rows import dict_row
+
+from parsing import extrair_info_alerta, extrair_texto_resposta, parsear_resposta_diagnostico
+
+logger = logging.getLogger("agent-orchestrator.graph")
 
 RAG_SERVICE_URL = os.environ.get("RAG_SERVICE_URL", "http://rag-service:8002")
 POSTGRES_URI = os.environ.get("POSTGRES_URI")
@@ -51,38 +58,8 @@ llm = ChatGoogleGenerativeAI(
 
 
 def triage_node(state: IncidentState) -> dict:
-    """
-    Agente 1 - Triagem: extrai um resumo em texto do payload bruto do
-    Alertmanager, além do nome do container afetado (extraído da label
-    `instance`, no formato "nome:porta") — é esse nome que o nó de ação
-    vai usar para saber QUAL container reiniciar, se for aprovado.
-    """
-    alerts = state["alert_raw"].get("alerts", [])
-    if not alerts:
-        return {
-            "alert_summary": "Alerta recebido sem detalhes (payload vazio).",
-            "severity_original": "desconhecida",
-            "target_container": None,
-        }
-
-    primeiro_alerta = alerts[0]
-    labels = primeiro_alerta.get("labels", {})
-    annotations = primeiro_alerta.get("annotations", {})
-
-    alertname = labels.get("alertname", "AlertaDesconhecido")
-    summary = annotations.get("summary", "")
-    description = annotations.get("description", "")
-    instance = labels.get("instance", "")
-
-    alert_summary = f"{alertname}: {summary}. {description}".strip()
-    severity_original = labels.get("severity", "desconhecida")
-    target_container = instance.split(":")[0] if instance else None
-
-    return {
-        "alert_summary": alert_summary,
-        "severity_original": severity_original,
-        "target_container": target_container,
-    }
+    """Agente 1 - Triagem: extrai um resumo do alerta bruto (sem I/O)."""
+    return extrair_info_alerta(state["alert_raw"])
 
 
 def retrieve_node(state: IncidentState) -> dict:
@@ -98,103 +75,6 @@ def retrieve_node(state: IncidentState) -> dict:
     response.raise_for_status()
     resultados = response.json()["resultados"]
     return {"retrieved_runbooks": resultados}
-
-
-def _extract_text(content) -> str:
-    """
-    Normaliza o `.content` da resposta do LLM (string ou lista de blocos).
-    Alguns blocos podem vir como objetos (não dict/str) dependendo da
-    versão do SDK — por isso o `getattr` como última tentativa, ao invés
-    de simplesmente descartar o bloco silenciosamente (o que cortaria o
-    texto no meio sem nenhum aviso).
-    """
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        partes = []
-        for bloco in content:
-            if isinstance(bloco, str):
-                partes.append(bloco)
-            elif isinstance(bloco, dict):
-                partes.append(bloco.get("text", ""))
-            else:
-                partes.append(getattr(bloco, "text", "") or str(bloco))
-        return "".join(partes)
-    return str(content)
-
-
-_CAMPO_REGEX = {
-    # A aspas de fechamento é opcional (`"?`) de propósito: se a resposta
-    # do modelo foi truncada no meio de uma string, não existe aspas de
-    # fechamento, e sem essa flexibilidade o valor inteiro seria perdido.
-    "causa_provavel": r'"causa_provavel"\s*:\s*"([^"]*)"?',
-    "acao_recomendada": r'"acao_recomendada"\s*:\s*"([^"]*)"?',
-    "severidade": r'"severidade"\s*:\s*"([^"]*)"?',
-    "acao_automatizavel": r'"acao_automatizavel"\s*:\s*(true|false)',
-}
-
-
-def _recuperar_campos_parciais(texto: str) -> Optional[dict]:
-    """
-    Segunda linha de defesa: se o JSON vier malformado ou cortado (ex:
-    resposta truncada no meio), tenta recuperar os campos individualmente
-    via regex, ao invés de descartar tudo. Modelos menores/mais baratos
-    (como o Gemma) ocasionalmente truncam ou geram JSON levemente
-    inválido — isso recupera o que der, e usa "revisao_manual" como
-    padrão seguro para o que não conseguir recuperar.
-    """
-    campos = {}
-    for campo, padrao in _CAMPO_REGEX.items():
-        match = re.search(padrao, texto)
-        if match:
-            campos[campo] = match.group(1)
-
-    if not campos:
-        return None
-
-    return {
-        "causa_provavel": campos.get("causa_provavel", texto[:500]),
-        "acao_recomendada": campos.get(
-            "acao_recomendada",
-            "Resposta do modelo parcialmente corrompida — revisar manualmente.",
-        ),
-        "severidade": campos.get("severidade", "desconhecida"),
-        # Padrão seguro: se não conseguimos confirmar que é automatizável,
-        # tratamos como NÃO automatizável — a dúvida nunca deve resultar
-        # em uma ação automática.
-        "acao_automatizavel": campos.get("acao_automatizavel") == "true",
-    }
-
-
-def _parse_json_response(texto: str) -> dict:
-    """
-    Tenta, em ordem:
-    1. Parse de JSON completo e válido (removendo blocos de código
-       markdown, se houver)
-    2. Recuperação parcial via regex (se o JSON veio truncado/malformado)
-    3. Fallback total: texto bruto como causa_provavel, sem automação
-    """
-    texto_limpo = texto.strip()
-    if texto_limpo.startswith("```"):
-        texto_limpo = texto_limpo.strip("`").strip()
-        if texto_limpo.lower().startswith("json"):
-            texto_limpo = texto_limpo[4:].strip()
-
-    try:
-        return json.loads(texto_limpo)
-    except json.JSONDecodeError:
-        pass
-
-    recuperado = _recuperar_campos_parciais(texto)
-    if recuperado:
-        return recuperado
-
-    return {
-        "causa_provavel": texto,
-        "acao_recomendada": "Não foi possível interpretar uma ação estruturada a partir da resposta do modelo — revisar manualmente.",
-        "severidade": "desconhecida",
-        "acao_automatizavel": False,
-    }
 
 
 def diagnose_node(state: IncidentState) -> dict:
@@ -228,10 +108,11 @@ def diagnose_node(state: IncidentState) -> dict:
         f"Runbooks relevantes encontrados:\n{contexto}"
     )
 
+    logger.info("Chamando o LLM para diagnóstico (alerta: %s)", state["alert_summary"])
     resposta = llm.invoke(
         [SystemMessage(content=system_prompt), HumanMessage(content=human_prompt)]
     )
-    parsed = _parse_json_response(_extract_text(resposta.content))
+    parsed = parsear_resposta_diagnostico(extrair_texto_resposta(resposta.content))
 
     acao_automatizavel = bool(parsed.get("acao_automatizavel", False))
     action_type = "restart_container" if acao_automatizavel else "revisao_manual"
@@ -278,9 +159,11 @@ def execute_action_node(state: IncidentState) -> dict:
     comandos), não dar acesso livre ao socket.
     """
     if not state.get("approved"):
+        logger.info("Ação REJEITADA pelo humano — nenhuma alteração será feita.")
         return {"action_result": "Ação REJEITADA pelo humano — nenhuma alteração foi feita no sistema."}
 
     if state.get("action_type") != "restart_container" or not state.get("target_container"):
+        logger.info("Ação aprovada, mas não automatizável — requer revisão manual.")
         return {
             "action_result": (
                 "Ação aprovada, mas não é uma ação automatizável neste "
@@ -293,10 +176,13 @@ def execute_action_node(state: IncidentState) -> dict:
         client = docker.from_env()
         container = client.containers.get(state["target_container"])
         container.restart()
+        logger.info("Container '%s' reiniciado com sucesso.", state["target_container"])
         return {"action_result": f"Container '{state['target_container']}' reiniciado com sucesso."}
     except docker.errors.NotFound:
+        logger.warning("Container '%s' não encontrado.", state["target_container"])
         return {"action_result": f"Container '{state['target_container']}' não encontrado — verifique o nome."}
     except Exception as e:
+        logger.exception("Falha ao executar ação corretiva")
         return {"action_result": f"Falha ao executar ação corretiva: {e}"}
 
 
@@ -307,7 +193,7 @@ def _build_checkpointer():
     rápidos sem subir o Postgres, mas SEM sobreviver a restarts.
     """
     if not POSTGRES_URI:
-        print("[agent-orchestrator] POSTGRES_URI não configurado — usando checkpointer em memória (não sobrevive a restarts)")
+        logger.warning("POSTGRES_URI não configurado — usando checkpointer em memória (não sobrevive a restarts)")
         return MemorySaver()
 
     # autocommit=True e row_factory=dict_row são exigidos pelo PostgresSaver
@@ -317,7 +203,7 @@ def _build_checkpointer():
     conn = psycopg.connect(POSTGRES_URI, autocommit=True, row_factory=dict_row)
     checkpointer = PostgresSaver(conn)
     checkpointer.setup()  # idempotente: cria as tabelas se ainda não existirem
-    print("[agent-orchestrator] checkpointer Postgres conectado e configurado")
+    logger.info("Checkpointer Postgres conectado e configurado")
     return checkpointer
 
 
