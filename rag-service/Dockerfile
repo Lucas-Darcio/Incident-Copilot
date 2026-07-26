@@ -15,7 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # sem esperar um download na hora de responder ao usuário.
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
 
-COPY main.py .
+COPY main.py chunking.py ./
 
 EXPOSE 8002
 

@@ -131,10 +131,9 @@ async def receive_alert(request: Request, background_tasks: BackgroundTasks):
                 "diagnosis": pendente.get("diagnosis"),
                 "recommended_action": pendente.get("recommended_action"),
                 "action_result": (
-                    "Alerta resolvido automaticamente antes de uma decisão "
-                    "humana (ex: o problema desapareceu sozinho, ou o "
-                    "timeout de teste expirou) — nenhuma ação corretiva "
-                    "foi executada."
+                    "Alert resolved automatically before a human decision "
+                    "(e.g., the problem went away on its own, or the test "
+                    "timeout expired) — no corrective action was executed."
                 ),
             }
             logger.info("thread_id=%s auto-resolvido (estava pendente)", thread_id_antigo)

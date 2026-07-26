@@ -1,46 +1,49 @@
-# Runbook: Serviço não responde a health checks (fora do ar)
+# Runbook: Service not responding to health checks (down)
 
-## Sintomas
-- Endpoint de health check (`/health`) para de responder ou passa a
-  retornar erro.
-- Requisições dos clientes retornam timeout ou erro de conexão recusada.
-- Orquestrador (Docker/Kubernetes) marca o container como não saudável.
+## Symptoms
 
-## Causas prováveis
-1. **Crash da aplicação**: exceção não tratada derrubou o processo
-   principal.
-2. **Deadlock ou travamento**: o processo está vivo, mas não consegue
-   mais processar requisições (thread pool esgotado, lock nunca
-   liberado).
-3. **Dependência externa indisponível**: o serviço trava esperando
-   resposta de um banco de dados, fila ou API externa que está fora do
-   ar, sem timeout configurado.
-4. **Esgotamento de recursos**: falta de memória ou file descriptors
-   disponíveis impede o processo de aceitar novas conexões.
+- Health check endpoint (`/health`) stops responding or starts returning an
+  error.
+- Client requests return timeouts or connection refused errors.
+- Orchestrator (Docker/Kubernetes) marks the container as unhealthy.
 
-## Diagnóstico
-1. Verifique se o processo/container ainda está rodando ou já
-   reiniciou sozinho (reinícios recorrentes indicam crash, não
-   travamento).
-2. Consulte os logs mais recentes do container em busca de stack
-   traces ou mensagens de erro no momento em que parou de responder.
-3. Verifique o status das dependências externas (banco de dados, cache,
-   filas) que o serviço consome.
-4. Se o processo está vivo mas não responde, um travamento
-   (deadlock/thread pool esgotado) é mais provável que um crash.
+## Likely causes
 
-## Ações recomendadas
-- **Se for crash**: reiniciar resolve o sintoma imediato; analisar o
-  stack trace do log para identificar a exceção raiz.
-- **Se for dependência externa fora do ar**: a correção real é na
-  dependência, não no serviço afetado — mas adicionar timeout e
-  circuit breaker evita que uma falha externa trave o serviço inteiro
-  no futuro.
-- **Se for esgotamento de recursos**: verificar limites de memória,
-  conexões e file descriptors configurados versus o necessário.
-- Sempre confirmar que o serviço voltou a responder corretamente após
-  qualquer ação corretiva, não apenas que o container reiniciou.
+1. **Application crash**: an unhandled exception killed the main
+   process.
+2. **Deadlock or hang**: the process is still running, but can no longer
+   process requests (exhausted thread pool, unreleased lock).
+3. **Unavailable external dependency**: the service hangs waiting for a
+   response from a database, queue, or external API that is down, with
+   no timeout configured.
+4. **Resource exhaustion**: lack of memory or available file descriptors
+   prevents the process from accepting new connections.
 
-## Severidade
-Crítica — impacto direto e imediato no usuário final. Deve ser tratada
-com prioridade máxima.
+## Diagnosis
+
+1. Check if the process/container is still running or has already restarted on
+   its own (recurrent restarts indicate a crash, not a hang).
+2. Inspect the container's recent logs for stack traces or error
+   messages from when it stopped responding.
+3. Check the status of external dependencies (database, cache, queues)
+   consumed by the service.
+4. If the process is alive but not responding, a hang (deadlock/exhausted
+   thread pool) is more likely than a crash.
+
+## Recommended actions
+
+- **If it is a crash**: restarting resolves the immediate symptom; analyze the
+  log's stack trace to identify the root exception.
+- **If an external dependency is down**: the actual fix lies in the
+  dependency, not the affected service — but adding timeouts and
+  circuit breakers prevents external failures from hanging the whole service in
+  the future.
+- **If it is resource exhaustion**: verify configured limits for memory,
+  connections, and file descriptors against what is actually needed.
+- Always confirm that the service is responding correctly again after any
+  corrective action, rather than just checking that the container restarted.
+
+## Severity
+
+Critical — direct and immediate impact on the end user. Must be treated
+with the highest priority.

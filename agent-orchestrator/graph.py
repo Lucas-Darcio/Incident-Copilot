@@ -89,23 +89,27 @@ def diagnose_node(state: IncidentState) -> dict:
     )
 
     system_prompt = (
-        "Você é um agente de diagnóstico de incidentes de infraestrutura. "
-        "Use os runbooks fornecidos como referência para diagnosticar o "
-        "alerta recebido. A única ação automatizável disponível neste "
-        "sistema é REINICIAR O CONTAINER afetado — se essa for a ação "
-        "recomendada pelo runbook, marque acao_automatizavel como true; "
-        "para qualquer outra ação (escalar, revisar código, etc.), marque "
-        "como false, pois exige revisão humana manual. "
-        "Responda ESTRITAMENTE em JSON válido, sem texto fora do JSON, "
-        "no seguinte formato: "
+        "You are an infrastructure incident diagnosis agent. "
+        "Use the provided runbooks as reference to diagnose the alert "
+        "received. The only automatable action available in this system "
+        "is RESTARTING THE AFFECTED CONTAINER — if that is the action "
+        "recommended by the runbook, set acao_automatizavel to true; "
+        "for any other action (scaling, reviewing code, etc.), set it "
+        "to false, since it requires manual human review. "
+        "IMPORTANT: the runbooks provided as context may be written in "
+        "Portuguese, but your answer must ALWAYS be written in ENGLISH, "
+        "regardless of the language of the alert or the runbooks. "
+        "Respond STRICTLY in valid JSON, with no text outside the JSON, "
+        "in the following format (keep these exact key names, but the "
+        "VALUES must be in English): "
         '{"causa_provavel": "...", "acao_recomendada": "...", '
-        '"severidade": "baixa|media|alta|critica", '
+        '"severidade": "low|medium|high|critical", '
         '"acao_automatizavel": true|false}'
     )
     human_prompt = (
-        f"Alerta recebido: {state['alert_summary']}\n"
-        f"Severidade original do alerta: {state['severity_original']}\n\n"
-        f"Runbooks relevantes encontrados:\n{contexto}"
+        f"Alert received: {state['alert_summary']}\n"
+        f"Original alert severity: {state['severity_original']}\n\n"
+        f"Relevant runbooks found:\n{contexto}"
     )
 
     logger.info("Chamando o LLM para diagnóstico (alerta: %s)", state["alert_summary"])
@@ -160,15 +164,15 @@ def execute_action_node(state: IncidentState) -> dict:
     """
     if not state.get("approved"):
         logger.info("Ação REJEITADA pelo humano — nenhuma alteração será feita.")
-        return {"action_result": "Ação REJEITADA pelo humano — nenhuma alteração foi feita no sistema."}
+        return {"action_result": "Action REJECTED by the human — no changes were made to the system."}
 
     if state.get("action_type") != "restart_container" or not state.get("target_container"):
         logger.info("Ação aprovada, mas não automatizável — requer revisão manual.")
         return {
             "action_result": (
-                "Ação aprovada, mas não é uma ação automatizável neste "
-                "projeto (ex: escalar réplicas, revisar código) — "
-                "requer intervenção manual de um engenheiro."
+                "Action approved, but it is not an automatable action in "
+                "this project (e.g., scaling replicas, reviewing code) — "
+                "requires manual intervention from an engineer."
             )
         }
 
@@ -177,13 +181,13 @@ def execute_action_node(state: IncidentState) -> dict:
         container = client.containers.get(state["target_container"])
         container.restart()
         logger.info("Container '%s' reiniciado com sucesso.", state["target_container"])
-        return {"action_result": f"Container '{state['target_container']}' reiniciado com sucesso."}
+        return {"action_result": f"Container '{state['target_container']}' restarted successfully."}
     except docker.errors.NotFound:
         logger.warning("Container '%s' não encontrado.", state["target_container"])
-        return {"action_result": f"Container '{state['target_container']}' não encontrado — verifique o nome."}
+        return {"action_result": f"Container '{state['target_container']}' not found — check the name."}
     except Exception as e:
         logger.exception("Falha ao executar ação corretiva")
-        return {"action_result": f"Falha ao executar ação corretiva: {e}"}
+        return {"action_result": f"Failed to execute corrective action: {e}"}
 
 
 def _build_checkpointer():

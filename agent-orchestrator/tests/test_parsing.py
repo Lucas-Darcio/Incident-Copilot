@@ -36,7 +36,7 @@ def test_extrair_info_alerta_payload_completo():
 def test_extrair_info_alerta_payload_vazio():
     resultado = extrair_info_alerta({"alerts": []})
     assert resultado["target_container"] is None
-    assert resultado["severity_original"] == "desconhecida"
+    assert resultado["severity_original"] == "unknown"
 
 
 def test_extrair_info_alerta_sem_instance():
@@ -97,7 +97,7 @@ def test_parsear_json_truncado_recupera_via_regex():
 def test_parsear_texto_completamente_invalido_usa_fallback_seguro():
     resultado = parsear_resposta_diagnostico("isso não é JSON nem se parece com um")
     assert resultado["acao_automatizavel"] is False
-    assert "revisar manualmente" in resultado["acao_recomendada"].lower() or resultado["causa_provavel"]
+    assert "review manually" in resultado["acao_recomendada"].lower() or resultado["causa_provavel"]
 
 
 def test_recuperar_campos_parciais_sem_nenhum_campo_reconhecivel():

@@ -1,42 +1,47 @@
-# Runbook: Latência alta nas requisições
+# Runbook: High request latency
 
-## Sintomas
-- Tempo de resposta médio ou p95/p99 acima do normal, mas o serviço
-  continua respondendo (diferente de "fora do ar").
-- Usuários relatam lentidão sem erros explícitos.
-- Filas internas (se houver) começam a acumular itens.
+## Symptoms
 
-## Causas prováveis
-1. **Consulta lenta ao banco de dados**: falta de índice, query mal
-   otimizada ou volume de dados maior que o esperado.
-2. **Contenção de recursos**: CPU ou memória do container próximos do
-   limite, causando processamento mais lento (correlacionar com os
-   runbooks de CPU/memória altas).
-3. **Dependência externa lenta**: chamada a uma API ou serviço externo
-   com tempo de resposta degradado.
-4. **Falta de paralelismo/conexões insuficientes**: pool de conexões
-   (banco de dados, HTTP) muito pequeno, causando fila de espera
-   interna antes mesmo de processar a requisição.
+- Average response time or p95/p99 above normal, but the service
+  continues to respond (unlike being "down").
+- Users report slowness without explicit errors.
+- Internal queues (if any) begin to accumulate items.
 
-## Diagnóstico
-1. Verifique se a latência está correlacionada com CPU ou memória alta
-   no mesmo container (nesse caso, tratar como sintoma de outro
-   runbook).
-2. Meça a latência de cada dependência externa separadamente (banco,
-   cache, APIs) para isolar onde está o gargalo.
-3. Verifique o tamanho do pool de conexões configurado versus o volume
-   de requisições simultâneas.
+## Likely causes
 
-## Ações recomendadas
-- **Se for gargalo de banco de dados**: revisar queries lentas e
-  índices antes de qualquer ação de infraestrutura.
-- **Se for contenção de recursos**: seguir o runbook correspondente
-  (CPU ou memória alta).
-- **Se for dependência externa lenta**: considerar timeout mais
-  agressivo e fallback, para não propagar a lentidão para o usuário.
-- **Mitigação temporária**: aumentar o pool de conexões pode aliviar o
-  sintoma rapidamente, mas não substitui a investigação da causa raiz.
+1. **Slow database query**: missing index, poorly optimized query, or
+   larger data volume than expected.
+2. **Resource contention**: container CPU or memory close to the
+   limit, causing slower processing (correlate with high CPU/memory
+   runbooks).
+3. **Slow external dependency**: call to an API or external service
+   with degraded response time.
+4. **Lack of parallelism/insufficient connections**: connection pool
+   (database, HTTP) too small, causing an internal waiting queue
+   even before processing the request.
 
-## Severidade
-Média a alta, dependendo do impacto no tempo de resposta percebido
-pelo usuário e se a tendência é de piora contínua.
+## Diagnosis
+
+1. Check if latency is correlated with high CPU or memory in the same
+   container (in this case, treat as a symptom of another runbook).
+2. Measure the latency of each external dependency separately (database,
+   cache, APIs) to isolate where the bottleneck is.
+3. Check the configured connection pool size versus the volume of
+   concurrent requests.
+
+## Recommended actions
+
+- **If it is a database bottleneck**: review slow queries and indices
+  before taking any infrastructure action.
+- **If it is resource contention**: follow the corresponding runbook
+  (high CPU or memory).
+- **If it is a slow external dependency**: consider a more aggressive
+  timeout and fallback, so as not to propagate slowness to the user.
+- **Temporary mitigation**: increasing the connection pool size can
+  relieve the symptom quickly, but does not replace investigating the
+  root cause.
+
+## Severity
+
+Medium to high, depending on the impact on the user-perceived response
+time and whether there is a trend of continuous degradation.

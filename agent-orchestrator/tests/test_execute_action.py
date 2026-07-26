@@ -36,7 +36,7 @@ def test_acao_rejeitada_nao_executa_nada():
         resultado = execute_action_node(_estado_base(approved=False))
 
     mock_from_env.assert_not_called()
-    assert "REJEITADA" in resultado["action_result"]
+    assert "REJECTED" in resultado["action_result"]
 
 
 def test_acao_nao_automatizavel_nao_executa_nada():
@@ -46,7 +46,7 @@ def test_acao_nao_automatizavel_nao_executa_nada():
         resultado = execute_action_node(_estado_base(action_type="revisao_manual"))
 
     mock_from_env.assert_not_called()
-    assert "não é uma ação automatizável" in resultado["action_result"]
+    assert "not an automatable action" in resultado["action_result"]
 
 
 def test_restart_bem_sucedido():
@@ -59,7 +59,7 @@ def test_restart_bem_sucedido():
 
     mock_client.containers.get.assert_called_once_with("app-fake")
     mock_container.restart.assert_called_once()
-    assert "reiniciado com sucesso" in resultado["action_result"]
+    assert "restarted successfully" in resultado["action_result"]
 
 
 def test_container_nao_encontrado():
@@ -69,7 +69,7 @@ def test_container_nao_encontrado():
     with patch("graph.docker.from_env", return_value=mock_client):
         resultado = execute_action_node(_estado_base())
 
-    assert "não encontrado" in resultado["action_result"]
+    assert "not found" in resultado["action_result"]
 
 
 def test_falha_generica_do_docker_nao_derruba_o_grafo():
@@ -82,4 +82,4 @@ def test_falha_generica_do_docker_nao_derruba_o_grafo():
     with patch("graph.docker.from_env", return_value=mock_client):
         resultado = execute_action_node(_estado_base())
 
-    assert "Falha ao executar ação corretiva" in resultado["action_result"]
+    assert "Failed to execute corrective action" in resultado["action_result"]

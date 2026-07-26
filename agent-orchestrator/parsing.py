@@ -19,8 +19,8 @@ def extrair_info_alerta(alert_raw: dict) -> dict:
     alerts = alert_raw.get("alerts", [])
     if not alerts:
         return {
-            "alert_summary": "Alerta recebido sem detalhes (payload vazio).",
-            "severity_original": "desconhecida",
+            "alert_summary": "Alert received with no details (empty payload).",
+            "severity_original": "unknown",
             "target_container": None,
         }
 
@@ -34,7 +34,7 @@ def extrair_info_alerta(alert_raw: dict) -> dict:
     instance = labels.get("instance", "")
 
     alert_summary = f"{alertname}: {summary}. {description}".strip()
-    severity_original = labels.get("severity", "desconhecida")
+    severity_original = labels.get("severity", "unknown")
     target_container = instance.split(":")[0] if instance else None
 
     return {
@@ -99,9 +99,9 @@ def recuperar_campos_parciais(texto: str) -> Optional[dict]:
         "causa_provavel": campos.get("causa_provavel", texto[:500]),
         "acao_recomendada": campos.get(
             "acao_recomendada",
-            "Resposta do modelo parcialmente corrompida — revisar manualmente.",
+            "Model response was partially corrupted — review manually.",
         ),
-        "severidade": campos.get("severidade", "desconhecida"),
+        "severidade": campos.get("severidade", "unknown"),
         "acao_automatizavel": campos.get("acao_automatizavel") == "true",
     }
 
@@ -131,7 +131,7 @@ def parsear_resposta_diagnostico(texto: str) -> dict:
 
     return {
         "causa_provavel": texto,
-        "acao_recomendada": "Não foi possível interpretar uma ação estruturada a partir da resposta do modelo — revisar manualmente.",
-        "severidade": "desconhecida",
+        "acao_recomendada": "Could not interpret a structured action from the model's response — review manually.",
+        "severidade": "unknown",
         "acao_automatizavel": False,
     }
